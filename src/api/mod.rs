@@ -176,7 +176,7 @@ pub struct PeripheralProperties {
 /// Peripheral is the device that you would like to communicate with (the "server" of BLE). This
 /// struct contains both the current state of the device (its properties, characteristics, etc.)
 /// as well as functions for communication.
-pub trait Peripheral: Send + Sync + Clone + Debug {
+pub trait Peripheral: Send + Sync + Debug {
     /// Returns the address of the peripheral.
     fn address(&self) -> BDAddr;
 

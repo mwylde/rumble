@@ -14,8 +14,6 @@ use std::fmt::{Debug, Formatter};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use bluez::protocol::hci::ACLData;
-use bluez::protocol::att;
 
 use self::StreamMessage::*;
 use api::BDAddr;
@@ -26,6 +24,9 @@ use bluez::adapter::Adapter;
 use bytes::BytesMut;
 use bytes::BufMut;
 use api::NotificationHandler;
+use bluez::protocol::hci_message::HciAclData;
+use bluez::protocol::att;
+use bluez::protocol::hci_message::L2capPacket;
 
 enum StreamMessage  {
     Command(Vec<u8>, Option<CommandCallback>),
@@ -168,12 +169,14 @@ impl ACLStream {
         list.push(handler);
     }
 
-    pub fn receive(&self, message: &ACLData) {
+    pub fn receive(&self, message: &HciAclData) {
         debug!("receive message: {:?}", message);
-        // message.data
-        // TODO: handle partial packets
-        if message.cid == ATT_CID {
-            let value = message.data.to_vec();
+        // TODO: handle partial packets... also this is ugly
+        let packet = L2capPacket::parse(message.get_data(),
+                                        message.get_data().len() as u16).unwrap().1;
+        if packet.get_channel_id() == ATT_CID {
+            // TODO: remove unnecessary clone
+            let value = packet.get_payload().to_vec();
             if !value.is_empty() {
                 match value[0] {
                     ATT_OP_EXCHANGE_MTU_REQ => {

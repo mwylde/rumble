@@ -29,7 +29,6 @@ use std::fmt::Formatter;
 use std::fmt;
 use std::sync::RwLock;
 use std::collections::VecDeque;
-use bluez::protocol::hci::ACLData;
 use std::sync::Condvar;
 use api::RequestCallback;
 use api::CommandCallback;
@@ -37,6 +36,9 @@ use api::UUID;
 use api::UUID::B16;
 use api::NotificationHandler;
 use std::fmt::Display;
+use bluez::protocol::hci_message::HciMessage;
+use bluez::protocol::hci_message::HciMessage_Message;
+use bluez::protocol::hci_message::HciAclData;
 
 #[derive(Copy, Debug)]
 #[repr(C)]
@@ -75,7 +77,7 @@ pub struct Peripheral {
     stream: Arc<RwLock<Option<ACLStream>>>,
     connection_tx: Arc<Mutex<Sender<u16>>>,
     connection_rx: Arc<Mutex<Receiver<u16>>>,
-    message_queue: Arc<Mutex<VecDeque<ACLData>>>,
+    message_queue: Arc<Mutex<VecDeque<HciAclData>>>,
 }
 
 impl Display for Peripheral {
@@ -111,58 +113,84 @@ impl Peripheral {
         }
     }
 
-    pub fn handle_device_message(&self, message: &hci::Message) {
-        match message {
-            &hci::Message::LEAdvertisingReport(ref info) => {
-                assert_eq!(self.address, info.bdaddr, "received message for wrong device");
-                use bluez::protocol::hci::LEAdvertisingData::*;
+    pub fn handle_device_message(&self, message: &HciMessage) {
+        match message.get_message() {
+            HciMessage_Message::HciEvent(event) => {
+                use bluez::protocol::hci_message::HciEvent_Event::*;
 
-                let mut properties = self.properties.lock().unwrap();
+                match event.get_event() {
+                    LeMetaEvent(event) => {
+                        use bluez::protocol::hci_message::LeMetaEvent_Event::*;
+                        match event.get_event() {
+                            LeAdvertisingReport(ref info) => {
+                                let address = BDAddr::from_slice(info.get_address());
 
-                properties.discovery_count += 1;
-                properties.address_type = if info.bdaddr_type == 1 {
-                    AddressType::Random
-                } else {
-                    AddressType::Public
-                };
+                                assert_eq!(self.address, address, "received message for wrong device");
+                                use bluez::protocol::hci_message::BasicDataType_Data::*;
 
-                properties.address = info.bdaddr;
+                                let mut properties = self.properties.lock().unwrap();
 
-                if info.evt_type == 4 {
-                    // discover event
-                    properties.has_scan_response = true;
-                } else {
-                    // TODO: reset service data
-                }
+                                properties.discovery_count += 1;
+                                properties.address_type = if info.get_address_type() == 1 {
+                                    AddressType::Random
+                                } else {
+                                    AddressType::Public
+                                };
 
-                for datum in info.data.iter() {
-                    match datum {
-                        &LocalName(ref name) => {
-                            properties.local_name = Some(name.clone());
-                        }
-                        &TxPowerLevel(ref power) => {
-                            properties.tx_power_level = Some(power.clone());
-                        }
-                        &ManufacturerSpecific(ref data) => {
-                            properties.manufacturer_data = Some(data.clone());
-                        }
-                        _ => {
-                            // skip for now
+                                if info.get_event_type() == 4 {
+                                    // discover event
+                                    properties.has_scan_response = true;
+                                } else {
+                                    // TODO: reset service data
+                                }
+
+                                for datum in info.get_data().iter() {
+                                    match datum.get_data() {
+                                        &ShortenedLocalName(ref name) => {
+                                            properties.local_name = Some(name.get_local_name().clone());
+                                        }
+                                        &CompleteLocalName(ref name) => {
+                                            properties.local_name = Some(name.get_local_name().clone());
+                                        }
+                                        &TxPowerLevel(ref power) => {
+                                            properties.tx_power_level = Some(power.get_level());
+                                        }
+                                        &ManufacturerSpecificData(ref data) => {
+                                            properties.manufacturer_data = Some(data.get_data().to_vec());
+                                        }
+                                        _ => {
+                                            // skip for now
+                                        }
+                                    }
+                                }
+                            }
+                            LeConnectionComplete(ref info) => {
+                                let address = BDAddr::from_slice(info.get_peer_address());
+
+                                assert_eq!(self.address, address, "received message for wrong device");
+
+                                debug!("got le conn complete {:?}", info);
+                                self.connection_tx.lock().unwrap().send(info.get_connection_handle()).unwrap();
+                            }
+                            _ => {}
                         }
                     }
+                    DisconnectionComplete(_) => {
+                        // destroy our stream
+                        debug!("removing stream for {} due to disconnect", self.address);
+                        let mut stream = self.stream.write().unwrap();
+                        *stream = None;
+                        // TODO clean up our sockets
+                    }
+                    _ => {}
                 }
             }
-            &hci::Message::LEConnComplete(ref info) => {
-                assert_eq!(self.address, info.bdaddr, "received message for wrong device");
-
-                debug!("got le conn complete {:?}", info);
-                self.connection_tx.lock().unwrap().send(info.handle.clone()).unwrap();
-            }
-            &hci::Message::ACLDataPacket(ref data) => {
-                let handle = data.handle.clone();
+            HciMessage_Message::HciAclData(ref data) => {
+                let handle = data.get_handle();
                 match self.stream.try_read() {
                     Ok(stream) => {
                         stream.iter().for_each(|stream| {
+                            warn!("stream handle {}, data handle {}", stream.handle, handle);
                             if stream.handle == handle {
                                 debug!("got data packet for {}: {:?}", self.address, data);
                                 stream.receive(data);
@@ -170,19 +198,13 @@ impl Peripheral {
                         });
                     }
                     Err(_e) => {
+                        warn!("still connecting... can't handle data");
                         // we can't access the stream right now because we're still connecting, so
                         // we'll push the message onto a queue for now
                         let mut queue = self.message_queue.lock().unwrap();
                         queue.push_back(data.clone());
                     }
                 }
-            },
-            &hci::Message::DisconnectComplete {..} => {
-                // destroy our stream
-                debug!("removing stream for {} due to disconnect", self.address);
-                let mut stream = self.stream.write().unwrap();
-                *stream = None;
-                // TODO clean up our sockets
             },
             msg => {
                 debug!("ignored message {:?}", msg);
@@ -384,7 +406,7 @@ impl ApiPeripheral for Peripheral {
                 let mut queue = self.message_queue.lock().unwrap();
                 while !queue.is_empty() {
                     let msg = queue.pop_back().unwrap();
-                    if s.handle == msg.handle {
+                    if s.handle == msg.get_handle() {
                         s.receive(&msg);
                     }
                 }

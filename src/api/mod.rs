@@ -40,6 +40,15 @@ pub struct BDAddr {
     pub address: [ u8 ; 6usize ]
 }
 
+impl BDAddr {
+    pub fn from_slice(v: &[u8]) -> BDAddr {
+        let mut address = [0u8; 6];
+        let v = &v[..6];
+        address.copy_from_slice(v);
+        BDAddr { address }
+    }
+}
+
 impl Display for BDAddr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let a = self.address;

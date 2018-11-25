@@ -90,6 +90,8 @@ extern crate failure;
 #[macro_use]
 extern crate failure_derive;
 
+// extern crate protogen_examples;
+
 use std::result;
 use std::time::Duration;
 

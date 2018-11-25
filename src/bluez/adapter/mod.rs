@@ -21,7 +21,8 @@ use bluez::adapter::peripheral::Peripheral;
 use bluez::constants::*;
 use bluez::ioctl;
 use api::EventHandler;
-
+use bluez::protocol::hci_message::HciMessage;
+use bluez::protocol::hci_message::HciMessage_Message;
 
 #[derive(Copy, Debug)]
 #[repr(C)]
@@ -249,22 +250,24 @@ impl ConnectedAdapter {
                     continue;
                 }
 
+                debug!("Got data: {:X?}", &buf[0..len]);
+
                 cur.put_slice(&buf[0..len]);
 
                 let mut new_cur: Option<Vec<u8>> = Some(vec![]);
                 {
-                    let result = {
-                        hci::message(&cur)
-                    };
+                    let result = HciMessage::parse(&cur);
 
                     match result {
                         Ok((left, result)) => {
                             ConnectedAdapter::handle(&connected, result);
                             if !left.is_empty() {
+                                debug!("Left over: {:x?}", left);
                                 new_cur = Some(left.to_owned());
                             };
                         }
-                        Err(nom::Err::Incomplete(_)) => {
+                        Err(nom::Err::Incomplete(e)) => {
+                            debug!("Incomplete! {:?}", e);
                             new_cur = None;
                         },
                         Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
@@ -287,52 +290,82 @@ impl ConnectedAdapter {
         }
     }
 
-    fn handle(&self, message: hci::Message) {
+    fn handle(&self, message: HciMessage) {
         debug!("got message {:?}", message);
 
-        match message {
-            hci::Message::LEAdvertisingReport(info) => {
-                let mut new = false;
-                let address = info.bdaddr.clone();
+        match message.get_message() {
+            HciMessage_Message::HciEvent(event) => {
+                use bluez::protocol::hci_message::HciEvent_Event::*;
 
-                {
-                    let mut peripherals = self.peripherals.lock().unwrap();
-                    let peripheral = peripherals.entry(info.bdaddr)
-                        .or_insert_with(|| {
-                            new = true;
-                            Peripheral::new(self.clone(), info.bdaddr)
-                        });
-
-
-                    peripheral.handle_device_message(&hci::Message::LEAdvertisingReport(info));
-                }
-
-                if new {
-                    self.emit(CentralEvent::DeviceDiscovered(address.clone()))
-                } else {
-                    self.emit(CentralEvent::DeviceUpdated(address.clone()))
-                }
-            }
-            hci::Message::LEConnComplete(info) => {
-                info!("connected to {:?}", info);
-                let address = info.bdaddr.clone();
-                let handle = info.handle.clone();
-                match self.peripheral(address) {
-                    Some(peripheral) => {
-                        peripheral.handle_device_message(&hci::Message::LEConnComplete(info))
+                match event.get_event() {
+                    DisconnectionComplete(event) => {
+                        let handle = event.get_connection_handle();
+                        let mut handles = self.handle_map.lock().unwrap();
+                        match handles.remove(&handle) {
+                            Some(addr) => {
+                                match self.peripheral(addr) {
+                                    Some(peripheral) => peripheral.handle_device_message(&message),
+                                    None => warn!("got disconnect for unknown device {}", addr),
+                                };
+                                self.emit(CentralEvent::DeviceDisconnected(addr));
+                            }
+                            None => {
+                                warn!("got disconnect for unknown handle {}", handle);
+                            }
+                        }
                     }
-                    // todo: there's probably a better way to handle this case
-                    None => warn!("Got connection for unknown device {}", info.bdaddr)
+                    CommandComplete(_) => {
+                        // TODO: handle
+                    }
+                    LeMetaEvent(event) => {
+                        use bluez::protocol::hci_message::LeMetaEvent_Event::*;
+                        match event.get_event() {
+                            LeConnectionComplete(info) => {
+                                info!("connected to {:?}", info);
+                                let address = BDAddr::from_slice(info.get_peer_address());
+                                let handle = info.get_connection_handle();
+                                match self.peripheral(address) {
+                                    Some(peripheral) => {
+                                        peripheral.handle_device_message(&message)
+                                    }
+                                    // todo: there's probably a better way to handle this case
+                                    None => warn!("Got connection for unknown device {}", address)
+                                }
+
+                                let mut handles = self.handle_map.lock().unwrap();
+                                handles.insert(handle, address);
+
+                                self.emit(CentralEvent::DeviceConnected(address));
+                            }
+                            LeAdvertisingReport(info) => {
+                                let mut new = false;
+                                let address = BDAddr::from_slice(info.get_address());
+
+                                {
+                                    let mut peripherals = self.peripherals.lock().unwrap();
+                                    let peripheral = peripherals.entry(address)
+                                        .or_insert_with(|| {
+                                            new = true;
+                                            Peripheral::new(self.clone(), address)
+                                        });
+
+
+                                    peripheral.handle_device_message(&message);
+                                }
+
+                                if new {
+                                    self.emit(CentralEvent::DeviceDiscovered(address.clone()))
+                                } else {
+                                    self.emit(CentralEvent::DeviceUpdated(address.clone()))
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
                 }
-
-                let mut handles = self.handle_map.lock().unwrap();
-                handles.insert(handle, address);
-
-                self.emit(CentralEvent::DeviceConnected(address));
             }
-            hci::Message::ACLDataPacket(data) => {
-                let message = hci::Message::ACLDataPacket(data);
-
+            HciMessage_Message::HciAclData(_) => {
                 // TODO this is a bit risky from a deadlock perspective (note mutexes are not
                 // reentrant in rust!)
                 let peripherals = self.peripherals.lock().unwrap();
@@ -341,25 +374,8 @@ impl ConnectedAdapter {
                     // we don't know the handler => device mapping, so send to all and let them filter
                     peripheral.handle_device_message(&message);
                 }
-            },
-            hci::Message::DisconnectComplete { handle, .. } => {
-                let mut handles = self.handle_map.lock().unwrap();
-                match handles.remove(&handle) {
-                    Some(addr) => {
-                        match self.peripheral(addr) {
-                            Some(peripheral) => peripheral.handle_device_message(&message),
-                            None => warn!("got disconnect for unknown device {}", addr),
-                        };
-                        self.emit(CentralEvent::DeviceDisconnected(addr));
-                    }
-                    None => {
-                        warn!("got disconnect for unknown handle {}", handle);
-                    }
-                }
             }
-            _ => {
-                // skip
-            }
+            _ => {}
         }
     }
 

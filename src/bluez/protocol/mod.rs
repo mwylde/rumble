@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub mod hci;
 pub mod att;
 pub mod hci_message;

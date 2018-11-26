@@ -221,8 +221,8 @@ impl ConnectedAdapter {
         let opcode = 0;
 
         filter.put_u32_le(type_mask);
-        filter.put_u32_le(event_mask1);
-        filter.put_u32_le(event_mask2);
+        filter.put_u32_le(event_mask1 as u32);
+        filter.put_u32_le(event_mask2 as u32);
         filter.put_u16_le(opcode);
 
         handle_error(unsafe {

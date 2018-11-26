@@ -137,6 +137,8 @@ impl Peripheral {
                                     AddressType::Public
                                 };
 
+                                properties.address = address;
+
                                 if info.get_event_type() == 4 {
                                     // discover event
                                     properties.has_scan_response = true;
@@ -190,7 +192,6 @@ impl Peripheral {
                 match self.stream.try_read() {
                     Ok(stream) => {
                         stream.iter().for_each(|stream| {
-                            warn!("stream handle {}, data handle {}", stream.handle, handle);
                             if stream.handle == handle {
                                 debug!("got data packet for {}: {:?}", self.address, data);
                                 stream.receive(data);

@@ -36,9 +36,9 @@ use api::UUID;
 use api::UUID::B16;
 use api::NotificationHandler;
 use std::fmt::Display;
-use bluez::protocol::hci_message::HciMessage;
-use bluez::protocol::hci_message::HciMessage_Message;
-use bluez::protocol::hci_message::HciAclData;
+use hci::protocol::HciMessage;
+use hci::protocol::HciMessage_Message;
+use hci::protocol::HciAclData;
 
 #[derive(Copy, Debug)]
 #[repr(C)]
@@ -116,17 +116,17 @@ impl Peripheral {
     pub fn handle_device_message(&self, message: &HciMessage) {
         match message.get_message() {
             HciMessage_Message::HciEvent(event) => {
-                use bluez::protocol::hci_message::HciEvent_Event::*;
+                use hci::protocol::HciEvent_Event::*;
 
                 match event.get_event() {
                     LeMetaEvent(event) => {
-                        use bluez::protocol::hci_message::LeMetaEvent_Event::*;
+                        use hci::protocol::LeMetaEvent_Event::*;
                         match event.get_event() {
                             LeAdvertisingReport(ref info) => {
                                 let address = BDAddr::from_slice(info.get_address());
 
                                 assert_eq!(self.address, address, "received message for wrong device");
-                                use bluez::protocol::hci_message::BasicDataType_Data::*;
+                                use hci::protocol::BasicDataType_Data::*;
 
                                 let mut properties = self.properties.lock().unwrap();
 

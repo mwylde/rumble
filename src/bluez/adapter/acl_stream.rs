@@ -24,9 +24,9 @@ use bluez::adapter::Adapter;
 use bytes::BytesMut;
 use bytes::BufMut;
 use api::NotificationHandler;
-use bluez::protocol::hci_message::HciAclData;
+use hci::protocol::HciAclData;
 use bluez::protocol::att;
-use bluez::protocol::hci_message::L2capPacket;
+use hci::protocol::L2capPacket;
 
 enum StreamMessage  {
     Command(Vec<u8>, Option<CommandCallback>),

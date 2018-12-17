@@ -2,7 +2,6 @@
 
 pub mod hci;
 pub mod att;
-pub mod hci_message;
 
 use nom::le_u8;
 

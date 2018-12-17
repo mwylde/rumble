@@ -26,8 +26,7 @@ bitflags = "1.0.1"
 failure = "0.1.1"
 failure_derive = "0.1.1"
 backtrace = "0.3.5"
-
-# protogen-examples = { path = "../protogen/protogen-examples"}
+hci = "0.1.0"
 
 [dependencies.nom]
 version = "^4.0"

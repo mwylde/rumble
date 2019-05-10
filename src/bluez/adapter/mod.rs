@@ -1,5 +1,5 @@
 mod acl_stream;
-mod peripheral;
+pub mod peripheral;
 
 use libc;
 use std;

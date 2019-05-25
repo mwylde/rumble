@@ -17,7 +17,7 @@ categories = ["network-programming", "hardware-support"]
 
 [dependencies]
 libc = "0.2.45"
-nix = "0.12.0"
+nix = "0.14.0"
 bytes = "0.4"
 num = "0.1.41"
 log = "0.3.8"

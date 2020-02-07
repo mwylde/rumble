@@ -432,6 +432,19 @@ impl Central<Peripheral> for ConnectedAdapter {
     }
 }
 
+impl Drop for ConnectedAdapter {
+    fn drop(&mut self) {
+        self.should_stop.store(true, Ordering::Relaxed);
+
+        // there are a bunch of things with a reference to this file
+        // descriptor, so the first one will close it and the rest will
+        // return EBADF.
+        handle_error(unsafe {
+            libc::close(self.adapter_fd)
+        }).ok();
+    }
+}
+
 /// Adapter represents a physical bluetooth interface in your system, for example a bluetooth
 /// dongle.
 #[derive(Debug, Clone)]

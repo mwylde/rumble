@@ -175,6 +175,7 @@ pub struct ConnectedAdapter {
     peripherals: Arc<Mutex<HashMap<BDAddr, Peripheral>>>,
     handle_map: Arc<Mutex<HashMap<u16, BDAddr>>>,
     event_handlers: Arc<Mutex<Vec<EventHandler>>>,
+    do_cleanup: bool,
 }
 
 impl ConnectedAdapter {
@@ -206,6 +207,7 @@ impl ConnectedAdapter {
             event_handlers: Arc::new(Mutex::new(vec![])),
             peripherals: Arc::new(Mutex::new(HashMap::new())),
             handle_map: Arc::new(Mutex::new(HashMap::new())),
+            do_cleanup: true,
         };
 
         connected.add_raw_socket_reader(adapter_fd);
@@ -213,6 +215,16 @@ impl ConnectedAdapter {
         connected.set_socket_filter()?;
 
         Ok(connected)
+    }
+
+    /// If keep, don't close the backing file descriptor when this ConnectedAdapter goes 
+    /// out of scope. If all ConnectedAdapters referencing a given socket file descriptor
+    /// are told to keep_fd, this will leak file descriptors.
+    /// 
+    /// For threaded use, clone a ConnectedAdapter whose lifetime is longer than the
+    /// thread's lifetime, and set the thread's clone to keep_fd.
+    pub unsafe fn keep_fd(&mut self, keep: bool) {
+        self.do_cleanup = !keep;
     }
 
     fn set_socket_filter(&self) -> Result<()> {
@@ -434,6 +446,10 @@ impl Central<Peripheral> for ConnectedAdapter {
 
 impl Drop for ConnectedAdapter {
     fn drop(&mut self) {
+        if self.do_cleanup {
+            return;
+        }
+
         self.should_stop.store(true, Ordering::Relaxed);
 
         // there are a bunch of things with a reference to this file

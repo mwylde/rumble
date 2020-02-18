@@ -50,7 +50,7 @@ impl Display for BDAddr {
 
 impl Debug for BDAddr {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        (self as &Display).fmt(f)
+        (self as &dyn Display).fmt(f)
     }
 }
 
@@ -63,11 +63,11 @@ pub struct ValueNotification {
     pub value: Vec<u8>,
 }
 
-pub type Callback<T> = Box<Fn(Result<T>) + Send>;
+pub type Callback<T> = Box<dyn Fn(Result<T>) + Send>;
 pub type CommandCallback = Callback<()>;
 pub type RequestCallback = Callback<Vec<u8>>;
 
-pub type NotificationHandler = Box<Fn(ValueNotification) + Send>;
+pub type NotificationHandler = Box<dyn Fn(ValueNotification) + Send>;
 
 /// A Bluetooth UUID. These can either be 2 bytes or 16 bytes long. UUIDs uniquely identify various
 /// objects in the Bluetooth universe.
@@ -102,7 +102,7 @@ impl Display for UUID {
 
 impl Debug for UUID {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        (self as &Display).fmt(f)
+        (self as &dyn Display).fmt(f)
     }
 }
 
@@ -270,7 +270,7 @@ pub enum CentralEvent {
     DeviceDisconnected(BDAddr),
 }
 
-pub type EventHandler = Box<Fn(CentralEvent) + Send>;
+pub type EventHandler = Box<dyn Fn(CentralEvent) + Send>;
 
 /// Central is the "client" of BLE. It's able to scan for and establish connections to peripherals.
 pub trait Central<P : Peripheral>: Send + Sync + Clone {
